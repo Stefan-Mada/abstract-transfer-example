@@ -173,8 +173,9 @@ void compareTransferFunctions(size_t bitwidth) {
       ++naiveLessPreciseCount;
     if(isNaiveMorePrecise)
       ++naiveMorePreciseCount;
-    if(!isNaiveLessPrecise && !naiveMorePreciseCount)
+    if(!isNaiveLessPrecise && !isNaiveMorePrecise)
       ++naiveSamePrecisionCount;
+
     if(isIncomparable(naiveKnownResults, llvmKnownResults))
       ++incomparableCount;
     totalPairsConcreteValCount += concreteResults.size();
