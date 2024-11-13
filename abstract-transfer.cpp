@@ -2,6 +2,7 @@
 #include "llvm/ADT/APInt.h"
 #include "llvm/Analysis/ValueTracking.h"
 #include "llvm/Support/KnownBits.h"
+#include "llvm/Support/raw_ostream.h"
 #include <stdexcept>
 #include <vector>
 
@@ -35,7 +36,7 @@ vector<KnownBits> enumerateAllValues(size_t bitwidth) {
   return retVec;
 }
 
-ostream& operator<<(ostream& os, const KnownBits& dt)
+string getStr(const KnownBits& dt)
 {
     string retStr;
 
@@ -50,8 +51,7 @@ ostream& operator<<(ostream& os, const KnownBits& dt)
         retStr += "T";
     }
     
-    os << retStr;
-    return os;
+    return retStr;
 }
 
 vector<APInt> concretization(const KnownBits& knownBits) {
@@ -88,22 +88,45 @@ vector<APInt> concretization(const KnownBits& knownBits) {
   return realRetVec;
 }
 
+KnownBits abstraction(const vector<APInt>& vals) {
+  KnownBits bestGuess;
+  if(vals.empty())
+    return bestGuess;
+
+  bestGuess.One = vals[0];
+  bestGuess.Zero = ~vals[0];
+
+  const size_t bitwidth = vals[0].getBitWidth();
+
+  for(size_t i = 1; i < vals.size(); ++i) {
+    bestGuess.One &= vals[i];
+    bestGuess.Zero &= ~vals[i];
+  }
+
+  return bestGuess;
+}
+
 
 
 int main() {
   auto allEnums = enumerateAllValues(2);
   for(const auto& knownBit : allEnums)
-    outs() << knownBit << " ";
+    outs() << getStr(knownBit) << " ";
   outs() << "\n";
 
   for(const auto& knownBit : allEnums) {
-    outs() << knownBit << ": ";
-    for(auto bitSet : concretization(knownBit)) {
+    outs() << getStr(knownBit) << ": ";
+    auto concreteVals = concretization(knownBit);
+    for(auto bitSet : concreteVals) {
       bitSet.print(outs(), false);
       outs() << ", ";
     }
+    outs() << " : ABSTRACT: " << getStr(abstraction(concreteVals)) << "\n";
+
     outs() << "\n";
   }
+
+  outs() << "FINAL: " << getStr(abstraction(vector{APInt(4, 10), APInt(4,1)})) << "\n";
       
   outs() << "\n";
 }
