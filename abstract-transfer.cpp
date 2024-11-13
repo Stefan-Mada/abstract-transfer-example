@@ -1,8 +1,5 @@
-#include <iostream>
 #include "llvm/ADT/APInt.h"
 #include "llvm/Analysis/ValueTracking.h"
-#include "llvm/Support/KnownBits.h"
-#include "llvm/Support/raw_ostream.h"
 #include <stdexcept>
 #include <vector>
 
@@ -96,8 +93,6 @@ KnownBits abstraction(const vector<APInt>& vals) {
   bestGuess.One = vals[0];
   bestGuess.Zero = ~vals[0];
 
-  const size_t bitwidth = vals[0].getBitWidth();
-
   for(size_t i = 1; i < vals.size(); ++i) {
     bestGuess.One &= vals[i];
     bestGuess.Zero &= ~vals[i];
@@ -106,27 +101,98 @@ KnownBits abstraction(const vector<APInt>& vals) {
   return bestGuess;
 }
 
-
-
-int main() {
-  auto allEnums = enumerateAllValues(2);
-  for(const auto& knownBit : allEnums)
-    outs() << getStr(knownBit) << " ";
-  outs() << "\n";
-
-  for(const auto& knownBit : allEnums) {
-    outs() << getStr(knownBit) << ": ";
-    auto concreteVals = concretization(knownBit);
-    for(auto bitSet : concreteVals) {
-      bitSet.print(outs(), false);
-      outs() << ", ";
+vector<pair<KnownBits&, KnownBits&>> getAllPairs(vector<KnownBits>& fullSet) {
+  vector<pair<KnownBits&, KnownBits&>> retVec;
+  for(size_t i = 0; i < fullSet.size(); ++i) {
+    for(size_t j = i; j < fullSet.size(); ++j) {
+      pair<KnownBits&, KnownBits&> currPair = {fullSet[i], fullSet[j]};
+      retVec.push_back(currPair);
     }
-    outs() << " : ABSTRACT: " << getStr(abstraction(concreteVals)) << "\n";
+  }
+  return retVec;
+}
 
-    outs() << "\n";
+vector<APInt> computeAllConcretePairs(const vector<APInt>& vals1, const vector<APInt>& vals2) {
+  vector<APInt> retVec;
+  for(size_t i = 0; i < vals1.size(); ++i) {
+    for(size_t j = 0; j < vals2.size(); ++j) {
+      retVec.push_back(vals1[i].sadd_sat(vals2[j]));
+    }
+  }
+  return retVec;
+}
+
+// is bit1 more precise than bit2 (less unknowns)
+bool morePrecise(const KnownBits& bit1, const KnownBits& bit2) {
+  size_t unknown1 = 0;
+  size_t unknown2 = 0;
+  
+  for(size_t i = 0; i < bit1.getBitWidth(); ++i)
+    if(bit1.One == 0 && bit1.Zero == 0)
+      ++unknown1;
+
+  for(size_t i = 0; i < bit2.getBitWidth(); ++i)
+    if(bit2.One == 0 && bit2.Zero == 0)
+      ++unknown2;
+
+  return unknown1 < unknown2;
+}
+
+bool isIncomparable(const KnownBits& bit1, const KnownBits& bit2) {
+  for(size_t i = 0; i < bit1.getBitWidth(); ++i) {
+    if(bit1.One[i] && bit2.Zero[i])
+      return true;
+    if(bit2.One[i] && bit1.Zero[i])
+      return true;
   }
 
-  outs() << "FINAL: " << getStr(abstraction(vector{APInt(4, 10), APInt(4,1)})) << "\n";
-      
-  outs() << "\n";
+  return false;
+}
+
+void compareTransferFunctions(size_t bitwidth) {
+  size_t naiveMorePreciseCount = 0;
+  size_t naiveLessPreciseCount = 0;
+  size_t naiveSamePrecisionCount = 0;
+  size_t incomparableCount = 0;
+  size_t totalPairsConcreteValCount = 0;
+
+  auto fullKnownBits = enumerateAllValues(bitwidth);
+  const auto allAbstractPairs = getAllPairs(fullKnownBits);
+
+  for(const auto& [bits1, bits2] : allAbstractPairs) {
+    auto llvmKnownResults = KnownBits::sadd_sat(bits1, bits2);
+
+    const auto concreteVals1 = concretization(bits1);
+    const auto concreteVals2 = concretization(bits2);
+    const auto concreteResults = computeAllConcretePairs(concreteVals1, concreteVals2);
+    const auto naiveKnownResults = abstraction(concreteResults);
+
+    bool isNaiveMorePrecise = morePrecise(naiveKnownResults, llvmKnownResults);
+    bool isNaiveLessPrecise = morePrecise(llvmKnownResults, naiveKnownResults);
+    if(isNaiveLessPrecise)
+      ++naiveLessPreciseCount;
+    if(isNaiveMorePrecise)
+      ++naiveMorePreciseCount;
+    if(!isNaiveLessPrecise && !naiveMorePreciseCount)
+      ++naiveSamePrecisionCount;
+    if(isIncomparable(naiveKnownResults, llvmKnownResults))
+      ++incomparableCount;
+    totalPairsConcreteValCount += concreteResults.size();
+  }
+
+  outs() << "Total abstract values in this domain: " << fullKnownBits.size() << "\n";
+  outs() << "Total pairs of abstract values in this domain: " << allAbstractPairs.size() << "\n";
+  outs() << "Total pairs of concrete values evaluated in this domain: " << totalPairsConcreteValCount << "\n\n";
+  outs() << "Naive approach was more precise: " << naiveMorePreciseCount << " times\n";
+  outs() << "Naive approach was less precise: " << naiveLessPreciseCount << " times\n";
+  outs() << "Naive approach was equally precise: " << naiveSamePrecisionCount << " times\n";
+  outs() << "Naive approach was incomparable: " << incomparableCount << " times\n";
+}
+
+int main(int argc, char** argv) {
+  if(argc != 2) {
+    errs() << "Must input one value representing bit width to evaluate, exiting.\n";
+    exit(1);
+  }
+  compareTransferFunctions(stoul(argv[1]));
 }
